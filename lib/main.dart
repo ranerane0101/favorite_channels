@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'screens/channel_list_screen.dart';
 import 'models/channel_model.dart';
@@ -7,8 +8,8 @@ import 'models/channel_model.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // 🔹 AdMob 初期化
-  // await MobileAds.instance.initialize();
+  // 🔹 Google Mobile Ads 初期化
+  MobileAds.instance.initialize();
 
   // 🔹 .env の読み込み（assets/.env に配置されていることを想定）
   await dotenv.load(fileName: ".env");

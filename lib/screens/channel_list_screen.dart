@@ -1,9 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:google_mobile_ads/google_mobile_ads.dart';
 import '../models/channel_model.dart';
 import '../utils/youtube_api.dart';
-import 'how_to_use_page.dart'; // 👈 追加
+import 'how_to_use_page.dart';
 
 class ChannelListScreen extends StatefulWidget {
   @override
@@ -15,8 +19,71 @@ class _ChannelListScreenState extends State<ChannelListScreen> {
   final _urlController = TextEditingController();
   bool _isLoading = false;
 
-  /// 🔹 チャンネル追加
+  RewardedAd? _rewardedAd;
+  bool _isRewardEarned = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadRewardedAd();
+  }
+
+  void _loadRewardedAd() {
+    final adUnitId = dotenv.env['ADMOB_REWARDED_AD_UNIT_ID'];
+    if (adUnitId == null || adUnitId.isEmpty) return;
+
+    RewardedAd.load(
+      adUnitId: adUnitId,
+      request: AdRequest(),
+      rewardedAdLoadCallback: RewardedAdLoadCallback(
+        onAdLoaded: (ad) => _rewardedAd = ad,
+        onAdFailedToLoad: (error) => _rewardedAd = null,
+      ),
+    );
+  }
+
+  Future<bool> _showRewardedAd() async {
+    if (_rewardedAd == null) return false;
+    _isRewardEarned = false;
+    final completer = Completer<bool>();
+
+    _rewardedAd!.fullScreenContentCallback = FullScreenContentCallback(
+      onAdDismissedFullScreenContent: (ad) {
+        ad.dispose();
+        _loadRewardedAd();
+        completer.complete(_isRewardEarned);
+      },
+      onAdFailedToShowFullScreenContent: (ad, error) {
+        ad.dispose();
+        _loadRewardedAd();
+        completer.complete(false);
+      },
+    );
+
+    _rewardedAd!.show(
+      onUserEarnedReward: (ad, reward) {
+        _isRewardEarned = true;
+      },
+    );
+
+    return completer.future;
+  }
+
+  bool _requiresAd(int nextIndex) {
+    return (nextIndex - 1) % 7 == 0 && nextIndex >= 8;
+  }
+
   void _addChannel() async {
+    final nextIndex = _channelBox.length + 1;
+
+    if (_requiresAd(nextIndex)) {
+      final adWatched = await _showRewardedAd();
+      if (!adWatched) {
+        _showError("このチャンネルを登録するには広告を視聴してください。");
+        return;
+      }
+    }
+
     final url = _urlController.text.trim();
     if (url.isEmpty) {
       _showError("チャンネルのURLを入力してください。");
@@ -30,7 +97,7 @@ class _ChannelListScreenState extends State<ChannelListScreen> {
         "・YouTubeの公式サイトからチャンネルURLをコピーしてください。\n"
         "・URLは以下のような形式である必要があります:\n"
         "  ✅ https://www.youtube.com/@channelName\n"
-        "  ✅ https://www.youtube.com/channel/UCxxxxx"
+        "  ✅ https://www.youtube.com/channel/UCxxxxx",
       );
       return;
     }
@@ -42,11 +109,7 @@ class _ChannelListScreenState extends State<ChannelListScreen> {
     setState(() => _isLoading = false);
 
     if (channelInfo == null) {
-      _showError(
-        "このチャンネルの情報を取得できませんでした。\n"
-        "・チャンネルが存在しない可能性があります。\n"
-        "・URLをもう一度確認してください。"
-      );
+      _showError("チャンネル情報の取得に失敗しました。URLを確認してください。");
       return;
     }
 
@@ -61,18 +124,17 @@ class _ChannelListScreenState extends State<ChannelListScreen> {
     setState(() {});
   }
 
-  /// 🔹 `_extractChannelId()` を修正し、`@channelName` を正しく処理
   String? _extractChannelId(String url) {
     final uri = Uri.tryParse(url);
     if (uri == null) return null;
 
     if (uri.host.contains("youtube.com") && uri.pathSegments.isNotEmpty) {
       if (uri.pathSegments[0] == "channel") {
-        return uri.pathSegments[1]; // 公式チャンネルID
+        return uri.pathSegments[1];
       } else if (uri.pathSegments[0] == "c" || uri.pathSegments[0] == "user") {
-        return uri.pathSegments[1]; // カスタムURL
+        return uri.pathSegments[1];
       } else if (uri.pathSegments[0].startsWith('@')) {
-        return uri.pathSegments[0]; // `@channelName` の場合はそのまま渡す
+        return uri.pathSegments[0];
       }
     }
     if (uri.host == "youtu.be" && uri.pathSegments.isNotEmpty) {
@@ -86,22 +148,8 @@ class _ChannelListScreenState extends State<ChannelListScreen> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: Row(
-          children: [
-            Icon(Icons.info_outline, color: Colors.blue),
-            SizedBox(width: 8),
-            Text("ご確認ください", style: TextStyle(fontWeight: FontWeight.bold)),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(message, style: TextStyle(fontSize: 16)),
-            SizedBox(height: 10),
-            Text("正しいURLの例: \nhttps://www.youtube.com/@channelName",
-                style: TextStyle(fontSize: 14, color: Colors.grey)),
-          ],
-        ),
+        title: Text("ご確認ください"),
+        content: Text(message),
         actions: [
           TextButton(
             child: Text("閉じる"),
@@ -117,7 +165,7 @@ class _ChannelListScreenState extends State<ChannelListScreen> {
       context: context,
       builder: (context) => AlertDialog(
         title: Text("本当に削除しますか？"),
-        content: Text("\"${channel.name}\" をお気に入りから削除してもよろしいですか？"),
+        content: Text("\"${channel.name}\" を削除してもよろしいですか？"),
         actions: [
           TextButton(
             child: Text("キャンセル"),
